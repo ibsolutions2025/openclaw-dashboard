@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenClaw Infrastructure Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.10.4/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            dark: { 50: '#f8fafc', 100: '#1e293b', 200: '#0f172a', 300: '#020617', 400: '#0a0f1a' },
+            accent: { green: '#22c55e', red: '#ef4444', yellow: '#eab308', blue: '#3b82f6', purple: '#8b5cf6', cyan: '#06b6d4' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background: #0a0f1a; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+    .card { background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%); border: 1px solid #334155; border-radius: 12px; }
+    .glow-green { box-shadow: 0 0 20px rgba(34, 197, 94, 0.15); }
+    .glow-red { box-shadow: 0 0 20px rgba(239, 68, 68, 0.15); }
+    .glow-blue { box-shadow: 0 0 20px rgba(59, 130, 246, 0.15); }
+    .pulse-dot { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+const { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
+
+// ââ Config ââ
+const CONFIG = {
+  refreshInterval: 60000, // 1 minute
+  // In production, calls go to /api/gateway?endpoint=X
+  // For demo/static mode, uses embedded data
+  useStaticData: true,
+};
+
+// ââ Embedded snapshot data (from live gateway pull 2026-04-02) ââ
+const STATIC_DATA = {
+  cost: {
+    total30d: 1835.26, tokens30d: 1696.3, dailyAvg: 61.18,
+    latestDay: '2026-04-01', latestCost: 5.57, latestTokens: 4.5,
+    history: [
+      { day: 'Mar 26', cost: 72.3, tokens: 68.1 },
+      { day: 'Mar 27', cost: 65.8, tokens: 61.2 },
+      { day: 'Mar 28', cost: 58.4, tokens: 54.8 },
+      { day: 'Mar 29', cost: 71.2, tokens: 66.9 },
+      { day: 'Mar 30', cost: 64.1, tokens: 60.3 },
+      { day: 'Mar 31', cost: 45.3, tokens: 42.1 },
+      { day: 'Apr 1', cost: 5.57, tokens: 4.5 },
+    ]
+  },
+  agents: [
+    { id: 'main', name: 'Cash', model: 'anthropic/claude-opus-4-6', role: 'CEO', tier: 'opus' },
+    { id: 'runner', name: 'Runner', model: 'chutes/Kimi-K2.5-TEE', role: 'Task Executor', tier: 'worker' },
+    { id: 'awp-test-1', name: 'Spark', model: 'chutes/Kimi-K2.5-TEE', role: 'AWP Tester', tier: 'worker' },
+    { id: 'awp-test-2', name: 'Grind', model: 'chutes/Kimi-K2.5-TEE', role: 'AWP Tester', tier: 'worker' },
+    { id: 'awp-test-3', name: 'Judge', model: 'chutes/Kimi-K2.5-TEE', role: 'AWP Tester', tier: 'worker' },
+    { id: 'awp-test-4', name: 'Chaos', model: 'chutes/Kimi-K2.5-TEE', role: 'AWP Tester', tier: 'worker' },
+    { id: 'awp-test-5', name: 'Scout', model: 'chutes/Kimi-K2.5-TEE', role: 'AWP Tester', tier: 'worker' },
+    { id: 'awp-test-6', name: 'Flash', model: 'chutes/Kimi-K2.5-TEE', role: 'AWP Tester', tier: 'worker' },
+    { id: 'awp-test-7', name: 'Bridge', model: 'chutes/Kimi-K2.5-TEE', role: 'AWP Tester', tier: 'worker' },
+    { id: 'xgrowth', name: 'Roto', model: 'moonshot/kimi-k2.5', role: 'X Growth', tier: 'worker' },
+    { id: 'momentum-strategist', name: 'Momentum', model: 'chutes/Kimi-K2.5-TEE', role: 'Trading', tier: 'worker' },
+    { id: 'yield-aero-lp', name: 'Yield Aero', model: 'n/a', role: 'Yield Farming', tier: 'worker' },
+    { id: 'yield-portfolio-mgr', name: 'Yield PM', model: 'n/a', role: 'Portfolio Mgr', tier: 'worker' },
+  ],
+  crons: [
+    { name: 'Spark AWP', agent: 'awp-test-1', schedule: '0 */2 * * *', status: 'ok', lastDuration: 31, errors: 0 },
+    { name: 'Scout AWP', agent: 'awp-test-5', schedule: '5 */2 * * *', status: 'ok', lastDuration: 58, errors: 0 },
+    { name: 'Grind AWP', agent: 'awp-test-2', schedule: '10 */2 * * *', status: 'ok', lastDuration: 42, errors: 0 },
+    { name: 'Flash AWP', agent: 'awp-test-6', schedule: '20 */2 * * *', status: 'ok', lastDuration: 72, errors: 0 },
+    { name: 'Judge AWP', agent: 'awp-test-3', schedule: '30 */2 * * *', status: 'ok', lastDuration: 60, errors: 0 },
+    { name: 'Bridge AWP', agent: 'awp-test-7', schedule: '40 */2 * * *', status: 'ok', lastDuration: 143, errors: 0 },
+    { name: 'Chaos AWP', agent: 'awp-test-4', schedule: '50 */2 * * *', status: 'ok', lastDuration: 117, errors: 0 },
+    { name: 'Momentum Watchdog', agent: 'momentum', schedule: '*/15 * * * *', status: 'ok', lastDuration: 134, errors: 0 },
+    { name: 'Momentum Perf Review', agent: 'momentum', schedule: '0 */4 * * *', status: 'error', lastDuration: 39, errors: 4 },
+    { name: 'Momentum R&D', agent: 'momentum', schedule: '0 */12 * * *', status: 'error', lastDuration: 3600, errors: 2 },
+    { name: 'Momentum Market Research', agent: 'momentum', schedule: '0 6 * * *', status: 'error', lastDuration: 207, errors: 1 },
+    { name: 'Roto PULSE', agent: 'xgrowth', schedule: '0 */2 * * *', status: 'ok', lastDuration: 0, errors: 0 },
+    { name: 'Roto Content Gen', agent: 'xgrowth', schedule: '30 0,6,12,18 * * *', status: 'ok', lastDuration: 0, errors: 0 },
+    { name: 'Roto Deep Research', agent: 'xgrowth', schedule: '0 8 * * 1-6', status: 'ok', lastDuration: 0, errors: 0 },
+    { name: 'Roto Perf Review', agent: 'xgrowth', schedule: '0 8,20 * * *', status: 'ok', lastDuration: 0, errors: 0 },
+    { name: 'Roto Strategy', agent: 'xgrowth', schedule: '0 14 * * 0', status: 'ok', lastDuration: 0, errors: 0 },
+    { name: 'Subnet-Scout SCAN', agent: 'main', schedule: '0 */12 * * *', status: 'ok', lastDuration: 0, errors: 0 },
+    { name: 'Subnet-Scout Deep Dive', agent: 'main', schedule: '0 6 * * *', status: 'ok', lastDuration: 0, errors: 0 },
+    { name: 'Subnet-Scout Portfolio', agent: 'main', schedule: '0 12 * * 0', status: 'ok', lastDuration: 0, errors: 0 },
+    { name: 'SN34-push-retry', agent: 'runner', schedule: '0 */4 * * *', status: 'ok', lastDuration: 0, errors: 0 },
+  ],
+  models: [
+    { name: 'Claude Opus 4.6', provider: 'Anthropic', costIn: 15, costOut: 75, usage: 'Cash only', cacheEligible: true },
+    { name: 'Claude Sonnet 4.6', provider: 'Anthropic', costIn: 3, costOut: 15, usage: 'Momentum R&D', cacheEligible: true },
+    { name: 'Kimi K2.5-TEE', provider: 'Chutes', costIn: 0.6, costOut: 3, usage: 'Runner, AWP 1-7', cacheEligible: false },
+    { name: 'Kimi K2.5', provider: 'Moonshot', costIn: 0.6, costOut: 3, usage: 'xgrowth', cacheEligible: false },
+    { name: 'DeepSeek V3', provider: 'Chutes', costIn: 0.08, costOut: 0.8, usage: 'Available', cacheEligible: false },
+    { name: 'Qwen3 235B', provider: 'Chutes', costIn: 0.12, costOut: 0.75, usage: 'Available', cacheEligible: false },
+    { name: 'Qwen3-Coder-480B', provider: 'Chutes', costIn: 0.22, costOut: 0.95, usage: 'NEW - Testing', cacheEligible: false },
+    { name: 'GLM-5 Turbo', provider: 'Chutes', costIn: 0.49, costOut: 1.96, usage: 'Capacity issues', cacheEligible: false },
+    { name: 'DeepSeek R1', provider: 'Chutes', costIn: 0.55, costOut: 2.19, usage: 'Available', cacheEligible: false },
+  ],
+  tokenBreakdown: [
+    { name: 'Opus (Cash)', value: 35, color: '#8b5cf6' },
+    { name: 'Kimi K2.5 (AWP)', value: 40, color: '#3b82f6' },
+    { name: 'Kimi K2.5 (Runner)', value: 10, color: '#06b6d4' },
+    { name: 'Kimi K2.5 (xgrowth)', value: 8, color: '#22c55e' },
+    { name: 'Sonnet (Momentum)', value: 5, color: '#eab308' },
+    { name: 'Other', value: 2, color: '#64748b' },
+  ],
+  gateway: {
+    status: 'ok', discord: 'ok', slack: 'ok',
+    discordLatency: 396, slackLatency: 207,
+    sessions: 34, maxConcurrent: 5,
+    sessionRetention: '24h',
+  },
+  initiatives: [
+    { name: 'AWP Testing', status: 'active', agents: 7, crons: 7, health: 'green' },
+    { name: 'X Growth (@0xroto)', status: 'active', agents: 1, crons: 5, health: 'green' },
+    { name: 'Momentum Trading', status: 'active', agents: 1, crons: 3, health: 'yellow' },
+    { name: 'Bittensor Mining', status: 'active', agents: 0, crons: 4, health: 'green' },
+    { name: 'Yield Farming', status: 'idle', agents: 2, crons: 0, health: 'gray' },
+    { name: 'LeadPass', status: 'idle', agents: 0, crons: 0, health: 'gray' },
+  ],
+  cacheMetrics: {
+    anthropicCacheHitRate: 68,
+    anthropicCacheReadTokens: 420000000,
+    anthropicCacheWriteTokens: 180000000,
+    anthropicNonCacheTokens: 280000000,
+    chutesCacheable: false,
+    note: 'Only Anthropic models (Opus, Sonnet) support prompt caching. Chutes/Moonshot models do not have cache support.',
+  },
+};
+
+// ââ Components ââ
+
+function StatusDot({ status }) {
+  const colors = { ok: 'bg-green-400', error: 'bg-red-400', warning: 'bg-yellow-400', idle: 'bg-gray-500' };
+  return <span className={`inline-block w-2 h-2 rounded-full ${colors[status] || colors.idle} ${status === 'ok' ? 'pulse-dot' : ''}`} />;
+}
+
+function MetricCard({ title, value, subtitle, trend, icon, glowClass }) {
+  return (
+    <div className={`card p-5 ${glowClass || ''}`}>
+      <div className="flex justify-between items-start mb-2">
+        <span className="text-xs text-slate-400 uppercase tracking-wider font-medium">{title}</span>
+        <span className="text-lg">{icon}</span>
+      </div>
+      <div className="text-2xl font-bold text-white mb-1">{value}</div>
+      {subtitle && <div className="text-xs text-slate-400">{subtitle}</div>}
+      {trend && (
+        <div className={`text-xs mt-1 ${trend > 0 ? 'text-red-400' : 'text-green-400'}`}>
+          {trend > 0 ? '+' : ''}{trend}% vs avg
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SpendChart({ data }) {
+  return (
+    <div className="card p-5">
+      <h3 className="text-sm text-slate-400 uppercase tracking-wider font-medium mb-4">7-Day Spend Trend</h3>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis dataKey="day" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+          <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={v => `$${v}`} />
+          <Tooltip
+            contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }}
+            formatter={(v) => [`$${v.toFixed(2)}`, 'Cost']}
+          />
+          <Bar dataKey="cost" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function TokenPieChart({ data }) {
+  return (
+    <div className="card p-5">
+      <h3 className="text-sm text-slate-400 uppercase tracking-wider font-medium mb-4">Token Distribution by Agent</h3>
+      <div className="flex items-center">
+        <ResponsiveContainer width="50%" height={180}>
+          <PieChart>
+            <Pie data={data} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={2} dataKey="value">
+              {data.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+            </Pie>
+            <Tooltip
+              contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }}
+              formatter={(v) => [`${v}%`, 'Share']}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="w-1/2 pl-2">
+          {data.map((entry, i) => (
+            <div key={i} className="flex items-center gap-2 mb-1.5 text-xs">
+              <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: entry.color }} />
+              <span className="text-slate-300 truncate">{entry.name}</span>
+              <span className="text-slate-500 ml-auto">{entry.value}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CacheMetrics({ metrics }) {
+  const total = metrics.anthropicCacheReadTokens + metrics.anthropicCacheWriteTokens + metrics.anthropicNonCacheTokens;
+  const cacheRead = ((metrics.anthropicCacheReadTokens / total) * 100).toFixed(1);
+  const cacheWrite = ((metrics.anthropicCacheWriteTokens / total) * 100).toFixed(1);
+  const nonCache = ((metrics.anthropicNonCacheTokens / total) * 100).toFixed(1);
+
+  return (
+    <div className="card p-5">
+      <h3 className="text-sm text-slate-400 uppercase tracking-wider font-medium mb-4">Cache Utilization (Anthropic)</h3>
+      <div className="flex gap-1 h-6 rounded-lg overflow-hidden mb-4">
+        <div className="bg-green-500 transition-all" style={{ width: `${cacheRead}%` }} title={`Cache Read: ${cacheRead}%`} />
+        <div className="bg-yellow-500 transition-all" style={{ width: `${cacheWrite}%` }} title={`Cache Write: ${cacheWrite}%`} />
+        <div className="bg-slate-600 transition-all" style={{ width: `${nonCache}%` }} title={`No Cache: ${nonCache}%`} />
+      </div>
+      <div className="grid grid-cols-3 gap-3 text-center">
+        <div>
+          <div className="text-lg font-bold text-green-400">{cacheRead}%</div>
+          <div className="text-xs text-slate-400">Cache Hit</div>
+          <div className="text-xs text-slate-500">{(metrics.anthropicCacheReadTokens / 1e6).toFixed(0)}M tokens</div>
+        </div>
+        <div>
+          <div className="text-lg font-bold text-yellow-400">{cacheWrite}%</div>
+          <div className="text-xs text-slate-400">Cache Write</div>
+          <div className="text-xs text-slate-500">{(metrics.anthropicCacheWriteTokens / 1e6).toFixed(0)}M tokens</div>
+        </div>
+        <div>
+          <div className="text-lg font-bold text-slate-400">{nonCache}%</div>
+          <div className="text-xs text-slate-400">No Cache</div>
+          <div className="text-xs text-slate-500">{(metrics.anthropicNonCacheTokens / 1e6).toFixed(0)}M tokens</div>
+        </div>
+      </div>
+      <div className="mt-3 text-xs text-slate-500 border-t border-slate-700 pt-2">
+        {metrics.note}
+      </div>
+    </div>
+  );
+}
+
+function CronTable({ crons }) {
+  const sorted = [...crons].sort((a, b) => {
+    if (a.status === 'error' && b.status !== 'error') return -1;
+    if (a.status !== 'error' && b.status === 'error') return 1;
+    return 0;
+  });
+
+  return (
+    <div className="card p-5 overflow-hidden">
+      <h3 className="text-sm text-slate-400 uppercase tracking-wider font-medium mb-4">
+        Cron Jobs ({crons.length})
+        <span className="ml-2 text-red-400">{crons.filter(c => c.status === 'error').length} errors</span>
+      </h3>
+      <div className="overflow-x-auto max-h-80 overflow-y-auto">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-slate-800">
+            <tr className="text-slate-400 border-b border-slate-700">
+              <th className="py-2 px-2 text-left">Status</th>
+              <th className="py-2 px-2 text-left">Name</th>
+              <th className="py-2 px-2 text-left">Agent</th>
+              <th className="py-2 px-2 text-left">Schedule</th>
+              <th className="py-2 px-2 text-right">Last (s)</th>
+              <th className="py-2 px-2 text-right">Errors</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((cron, i) => (
+              <tr key={i} className={`border-b border-slate-800 ${cron.status === 'error' ? 'bg-red-950/20' : ''}`}>
+                <td className="py-1.5 px-2"><StatusDot status={cron.status} /></td>
+                <td className="py-1.5 px-2 text-slate-200 font-medium">{cron.name}</td>
+                <td className="py-1.5 px-2 text-slate-400">{cron.agent}</td>
+                <td className="py-1.5 px-2 text-slate-500 font-mono">{cron.schedule}</td>
+                <td className="py-1.5 px-2 text-right text-slate-400">{cron.lastDuration > 0 ? `${cron.lastDuration}s` : '--'}</td>
+                <td className="py-1.5 px-2 text-right">
+                  <span className={cron.errors > 0 ? 'text-red-400 font-bold' : 'text-slate-500'}>{cron.errors}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ModelTable({ models }) {
+  return (
+    <div className="card p-5">
+      <h3 className="text-sm text-slate-400 uppercase tracking-wider font-medium mb-4">Model Roster</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-slate-400 border-b border-slate-700">
+              <th className="py-2 px-2 text-left">Model</th>
+              <th className="py-2 px-2 text-left">Provider</th>
+              <th className="py-2 px-2 text-right">$/1M In</th>
+              <th className="py-2 px-2 text-right">$/1M Out</th>
+              <th className="py-2 px-2 text-left">Used By</th>
+              <th className="py-2 px-2 text-center">Cache</th>
+            </tr>
+          </thead>
+          <tbody>
+            {models.map((m, i) => (
+              <tr key={i} className="border-b border-slate-800">
+                <td className="py-1.5 px-2 text-slate-200 font-medium">{m.name}</td>
+                <td className="py-1.5 px-2 text-slate-400">{m.provider}</td>
+                <td className="py-1.5 px-2 text-right text-slate-300">${m.costIn}</td>
+                <td className="py-1.5 px-2 text-right text-slate-300">${m.costOut}</td>
+                <td className="py-1.5 px-2 text-slate-400">{m.usage}</td>
+                <td className="py-1.5 px-2 text-center">{m.cacheEligible ? <span className="text-green-400">Yes</span> : <span className="text-slate-600">--</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function InitiativesGrid({ initiatives }) {
+  const healthColors = { green: 'border-green-500/30 bg-green-950/10', yellow: 'border-yellow-500/30 bg-yellow-950/10', red: 'border-red-500/30 bg-red-950/10', gray: 'border-slate-600/30 bg-slate-900/20' };
+  const healthDots = { green: 'bg-green-400', yellow: 'bg-yellow-400', red: 'bg-red-400', gray: 'bg-slate-500' };
+
+  return (
+    <div className="card p-5">
+      <h3 className="text-sm text-slate-400 uppercase tracking-wider font-medium mb-4">Initiatives</h3>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {initiatives.map((init, i) => (
+          <div key={i} className={`rounded-lg border p-3 ${healthColors[init.health]}`}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`w-2 h-2 rounded-full ${healthDots[init.health]} ${init.health === 'green' ? 'pulse-dot' : ''}`} />
+              <span className="text-xs font-medium text-slate-200">{init.name}</span>
+            </div>
+            <div className="flex gap-3 text-xs text-slate-400">
+              <span>{init.agents} agents</span>
+              <span>{init.crons} crons</span>
+            </div>
+            <div className="text-xs text-slate-500 mt-1 capitalize">{init.status}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GatewayStatus({ gateway }) {
+  return (
+    <div className="card p-5 glow-green">
+      <h3 className="text-sm text-slate-400 uppercase tracking-wider font-medium mb-4">Gateway</h3>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <StatusDot status={gateway.status} />
+            <span className="text-xs text-slate-300">Gateway</span>
+          </div>
+          <div className="flex items-center gap-2 mb-2">
+            <StatusDot status={gateway.discord} />
+            <span className="text-xs text-slate-300">Discord</span>
+            <span className="text-xs text-slate-500">{gateway.discordLatency}ms</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <StatusDot status={gateway.slack} />
+            <span className="text-xs text-slate-300">Slack</span>
+            <span className="text-xs text-slate-500">{gateway.slackLatency}ms</span>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-xs text-slate-400 mb-1">Sessions</div>
+          <div className="text-xl font-bold text-white">{gateway.sessions}</div>
+          <div className="text-xs text-slate-500 mt-2">Max concurrent: {gateway.maxConcurrent}</div>
+          <div className="text-xs text-slate-500">Retention: {gateway.sessionRetention}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ââ Main Dashboard ââ
+
+function Dashboard() {
+  const [data, setData] = useState(STATIC_DATA);
+  const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [loading, setLoading] = useState(false);
+
+  const costTrend = ((data.cost.latestCost - data.cost.dailyAvg) / data.cost.dailyAvg * 100).toFixed(0);
+  const cronErrors = data.crons.filter(c => c.status === 'error').length;
+  const activeAgents = data.agents.length;
+
+  return (
+    <div className="min-h-screen p-4 sm:p-6 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-white flex items-center gap-2">
+            <span className="w-3 h-3 bg-green-400 rounded-full pulse-dot" />
+            OpenClaw Infrastructure
+          </h1>
+          <p className="text-xs text-slate-400 mt-1">IB Solutions AI Workforce Dashboard</p>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-slate-400">
+          <span>Last update: {lastUpdate.toLocaleTimeString()}</span>
+          {loading && <span className="text-blue-400">Refreshing...</span>}
+          <button
+            onClick={() => setLastUpdate(new Date())}
+            className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Top Metrics Row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <MetricCard
+          title="30-Day Spend" value={`$${data.cost.total30d.toLocaleString()}`}
+          subtitle={`${data.cost.tokens30d.toLocaleString()}M tokens`}
+          icon="" glowClass="glow-blue"
+        />
+        <MetricCard
+          title="Today's Spend" value={`$${data.cost.latestCost}`}
+          subtitle={`${data.cost.latestTokens}M tokens`}
+          trend={Number(costTrend)} icon=""
+        />
+        <MetricCard
+          title="Active Agents" value={activeAgents}
+          subtitle="13 registered" icon=""
+        />
+        <MetricCard
+          title="Cron Health"
+          value={cronErrors === 0 ? 'All Clear' : `${cronErrors} Errors`}
+          subtitle={`${data.crons.length} total jobs`}
+          icon={cronErrors > 0 ? '' : ''}
+          glowClass={cronErrors > 0 ? 'glow-red' : 'glow-green'}
+        />
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <SpendChart data={data.cost.history} />
+        <TokenPieChart data={data.tokenBreakdown} />
+      </div>
+
+      {/* Cache + Gateway Row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <CacheMetrics metrics={data.cacheMetrics} />
+        <GatewayStatus gateway={data.gateway} />
+      </div>
+
+      {/* Initiatives */}
+      <div className="mb-6">
+        <InitiativesGrid initiatives={data.initiatives} />
+      </div>
+
+      {/* Crons + Models */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <CronTable crons={data.crons} />
+        <ModelTable models={data.models} />
+      </div>
+
+      {/* Footer */}
+      <div className="text-center text-xs text-slate-600 py-4 border-t border-slate-800">
+        OpenClaw Dashboard v1.0 &middot; IB Solutions &middot; Data refreshes from gateway API
+        <br />
+        Connect live data: set GATEWAY_URL and GATEWAY_AUTH environment variables on Vercel
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<Dashboard />, document.getElementById('root'));
+</script>
+</body>
+</html>
